@@ -1,0 +1,41 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+EXEC SQL INCLUDE sqlca;
+
+static const char *current_step = "union_payload";
+
+static void
+sql_error(void)
+{
+    fprintf(stderr, "SQL error during %s: %.*s (sqlcode=%ld)\n",
+            current_step,
+            (int) sqlca.sqlerrm.sqlerrml,
+            sqlca.sqlerrm.sqlerrmc,
+            (long) sqlca.sqlcode);
+    EXEC SQL ROLLBACK;
+    EXEC SQL DISCONNECT CURRENT;
+    exit(EXIT_FAILURE);
+}
+
+
+union Payload
+{
+	int		count;
+	double	ratio;
+};
+
+int
+main(void)
+{
+	union Payload payload;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL CONNECT TO test USER oracle;
+
+	EXEC SQL SELECT 7 INTO :payload.count;
+	printf("payload.count=%d\n", payload.count);
+
+	EXEC SQL DISCONNECT CURRENT;
+	return 0;
+}

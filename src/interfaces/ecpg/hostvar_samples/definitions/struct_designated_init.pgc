@@ -1,0 +1,41 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+EXEC SQL INCLUDE sqlca;
+
+static const char *current_step = "struct_designated_init";
+
+static void
+sql_error(void)
+{
+    fprintf(stderr, "SQL error during %s: %.*s (sqlcode=%ld)\n",
+            current_step,
+            (int) sqlca.sqlerrm.sqlerrml,
+            sqlca.sqlerrm.sqlerrmc,
+            (long) sqlca.sqlcode);
+    EXEC SQL ROLLBACK;
+    EXEC SQL DISCONNECT CURRENT;
+    exit(EXIT_FAILURE);
+}
+
+
+struct Metrics
+{
+	int			total;
+	int			pending;
+};
+
+int
+main(void)
+{
+	struct Metrics metrics = { .total = 1, .pending = 0 };
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL CONNECT TO test USER oracle;
+
+	EXEC SQL SELECT 11, 3 INTO :metrics.total, :metrics.pending;
+	printf("metrics=%d/%d\n", metrics.total, metrics.pending);
+
+	EXEC SQL DISCONNECT CURRENT;
+	return 0;
+}

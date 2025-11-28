@@ -1,0 +1,33 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+EXEC SQL INCLUDE sqlca;
+
+static const char *current_step = "param_args";
+
+static void
+sql_error(void)
+{
+    fprintf(stderr, "SQL error during %s: %.*s (sqlcode=%ld)\n",
+            current_step,
+            (int) sqlca.sqlerrm.sqlerrml,
+            sqlca.sqlerrm.sqlerrmc,
+            (long) sqlca.sqlcode);
+    EXEC SQL ROLLBACK;
+    EXEC SQL DISCONNECT CURRENT;
+    exit(EXIT_FAILURE);
+}
+
+
+int
+main(int start_balance, char **argv)
+{
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL CONNECT TO test USER oracle;
+
+	EXEC SQL SELECT 3 INTO :start_balance;
+	printf("start_balance=%d (argv[0]=%s)\n", start_balance, argv[0]);
+
+	EXEC SQL DISCONNECT CURRENT;
+	return 0;
+}

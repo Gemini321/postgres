@@ -1,0 +1,38 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+EXEC SQL INCLUDE sqlca;
+
+static const char *current_step = "char_array";
+
+static void
+sql_error(void)
+{
+    fprintf(stderr, "SQL error during %s: %.*s (sqlcode=%ld)\n",
+            current_step,
+            (int) sqlca.sqlerrm.sqlerrml,
+            sqlca.sqlerrm.sqlerrmc,
+            (long) sqlca.sqlcode);
+    EXEC SQL ROLLBACK;
+    EXEC SQL DISCONNECT CURRENT;
+    exit(EXIT_FAILURE);
+}
+
+
+int
+main(void)
+{
+	char		db_name[64];
+
+	memset(db_name, 0, sizeof(db_name));
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL CONNECT TO test USER oracle;
+
+	EXEC SQL SELECT current_database() INTO :db_name;
+	printf("connected to %s\n", db_name);
+
+	EXEC SQL DISCONNECT CURRENT;
+	return 0;
+}

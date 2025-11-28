@@ -1,0 +1,40 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+EXEC SQL INCLUDE sqlca;
+
+static const char *current_step = "typedef_array";
+
+static void
+sql_error(void)
+{
+    fprintf(stderr, "SQL error during %s: %.*s (sqlcode=%ld)\n",
+            current_step,
+            (int) sqlca.sqlerrm.sqlerrml,
+            sqlca.sqlerrm.sqlerrmc,
+            (long) sqlca.sqlcode);
+    EXEC SQL ROLLBACK;
+    EXEC SQL DISCONNECT CURRENT;
+    exit(EXIT_FAILURE);
+}
+
+
+typedef char text32[32];
+
+int
+main(void)
+{
+	text32		city = "";
+
+	memset(city, 0, sizeof(city));
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL CONNECT TO test USER oracle;
+
+	EXEC SQL SELECT 'metropolis'::text INTO :city;
+	printf("city=%s\n", city);
+
+	EXEC SQL DISCONNECT CURRENT;
+	return 0;
+}

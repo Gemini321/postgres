@@ -1,0 +1,36 @@
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+EXEC SQL INCLUDE sqlca;
+
+static const char *current_step = "bool_init";
+
+static void
+sql_error(void)
+{
+    fprintf(stderr, "SQL error during %s: %.*s (sqlcode=%ld)\n",
+            current_step,
+            (int) sqlca.sqlerrm.sqlerrml,
+            sqlca.sqlerrm.sqlerrmc,
+            (long) sqlca.sqlcode);
+    EXEC SQL ROLLBACK;
+    EXEC SQL DISCONNECT CURRENT;
+    exit(EXIT_FAILURE);
+}
+
+
+int
+main(void)
+{
+	bool		is_ready = false;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL CONNECT TO test USER oracle;
+
+	EXEC SQL SELECT true INTO :is_ready;
+	printf("is_ready=%s\n", is_ready ? "true" : "false");
+
+	EXEC SQL DISCONNECT CURRENT;
+	return 0;
+}

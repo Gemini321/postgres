@@ -1,0 +1,36 @@
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+EXEC SQL INCLUDE sqlca;
+
+static const char *current_step = "volatile_bool";
+
+static void
+sql_error(void)
+{
+    fprintf(stderr, "SQL error during %s: %.*s (sqlcode=%ld)\n",
+            current_step,
+            (int) sqlca.sqlerrm.sqlerrml,
+            sqlca.sqlerrm.sqlerrmc,
+            (long) sqlca.sqlcode);
+    EXEC SQL ROLLBACK;
+    EXEC SQL DISCONNECT CURRENT;
+    exit(EXIT_FAILURE);
+}
+
+
+int
+main(void)
+{
+	volatile bool is_superuser;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL CONNECT TO test USER oracle;
+
+	EXEC SQL SELECT usesuper INTO :is_superuser FROM pg_user WHERE usename = CURRENT_USER;
+	printf("is_superuser=%s\n", is_superuser ? "true" : "false");
+
+	EXEC SQL DISCONNECT CURRENT;
+	return 0;
+}

@@ -1,0 +1,49 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+EXEC SQL INCLUDE sqlca;
+
+static const char *current_step = "func_callback";
+
+static void
+sql_error(void)
+{
+    fprintf(stderr, "SQL error during %s: %.*s (sqlcode=%ld)\n",
+            current_step,
+            (int) sqlca.sqlerrm.sqlerrml,
+            sqlca.sqlerrm.sqlerrmc,
+            (long) sqlca.sqlcode);
+    EXEC SQL ROLLBACK;
+    EXEC SQL DISCONNECT CURRENT;
+    exit(EXIT_FAILURE);
+}
+
+
+int
+apply_with_callback(int (*cb)(int, void *), int value, void *opaque)
+{
+	EXEC SQL SELECT 2 INTO :value;
+	return cb(value, opaque);
+}
+
+int
+bump(int value, void *opaque)
+{
+	(void) opaque;
+	return value + 1;
+}
+
+int
+main(void)
+{
+	int		result = 0;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL CONNECT TO test USER oracle;
+
+	result = apply_with_callback(bump, 0, NULL);
+	printf("result=%d\n", result);
+
+	EXEC SQL DISCONNECT CURRENT;
+	return 0;
+}

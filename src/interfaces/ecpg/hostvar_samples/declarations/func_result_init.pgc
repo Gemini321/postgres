@@ -1,0 +1,42 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+EXEC SQL INCLUDE sqlca;
+
+static const char *current_step = "func_result_init";
+
+static void
+sql_error(void)
+{
+    fprintf(stderr, "SQL error during %s: %.*s (sqlcode=%ld)\n",
+            current_step,
+            (int) sqlca.sqlerrm.sqlerrml,
+            sqlca.sqlerrm.sqlerrmc,
+            (long) sqlca.sqlcode);
+    EXEC SQL ROLLBACK;
+    EXEC SQL DISCONNECT CURRENT;
+    exit(EXIT_FAILURE);
+}
+
+
+static int
+fetch_default(int tmp)
+{
+	return 10;
+}
+
+int
+main(void)
+{
+	int         tmp;
+	int			value = fetch_default(tmp);
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL CONNECT TO test USER oracle;
+
+	EXEC SQL SELECT 13 INTO :value;
+	printf("value=%d\n", value);
+
+	EXEC SQL DISCONNECT CURRENT;
+	return 0;
+}
