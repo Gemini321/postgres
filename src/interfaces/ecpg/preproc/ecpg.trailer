@@ -46,6 +46,7 @@ statement: ecpgstart at toplevel_stmt ';'
 		if (braces_open > 0)
 		{
 			remove_typedefs(braces_open);
+			ecpg_c_parser_remove_typedefs(braces_open);
 			remove_variables(braces_open);
 			if (--braces_open == 0)
 			{
@@ -1089,8 +1090,8 @@ variable: opt_pointer ECPGColLabel opt_array_bounds opt_bit_field opt_initialize
 					 actual_type[struct_level].type_dimension,
 					 actual_type[struct_level].type_index,
 					 strlen(@1), false);
-		switch (actual_type[struct_level].type_enum)
-		{
+	switch (actual_type[struct_level].type_enum)
+	{
 			case ECPGt_struct:
 			case ECPGt_union:
 				if (atoi(dimension) < 0)
@@ -1178,6 +1179,8 @@ variable: opt_pointer ECPGColLabel opt_array_bounds opt_bit_field opt_initialize
 				@$ = cat_str(5, @1, @2, $3.str, @4, @5);
 				break;
 		}
+
+		type = ecpg_apply_extra_array_dims(type, $3.array_dims);
 
 		if (struct_level == 0)
 			new_variable(@2, type, braces_open);
@@ -1676,16 +1679,18 @@ ECPGVar: SQL_VAR
 						type = ECPGmake_array_type(ECPGmake_simple_type($5.type_enum, length, 0), dimension);
 					break;
 
-					default:
-					if (atoi(length) >= 0)
-						mmerror(PARSE_ERROR, ET_ERROR, "multidimensional arrays for simple data types are not supported");
+			default:
+			if (atoi(length) >= 0)
+				mmerror(PARSE_ERROR, ET_ERROR, "multidimensional arrays for simple data types are not supported");
 
-					if (atoi(dimension) < 0)
-						type = ECPGmake_simple_type($5.type_enum, "1", 0);
-					else
-						type = ECPGmake_array_type(ECPGmake_simple_type($5.type_enum, "1", 0), dimension);
-					break;
-			}
+			if (atoi(dimension) < 0)
+				type = ECPGmake_simple_type($5.type_enum, "1", 0);
+			else
+				type = ECPGmake_array_type(ECPGmake_simple_type($5.type_enum, "1", 0), dimension);
+			break;
+		}
+
+			type = ecpg_apply_extra_array_dims(type, $6.array_dims);
 
 			ECPGfree_type(p->type);
 			p->type = type;
@@ -2009,37 +2014,7 @@ indicator: cvariable
 
 cvariable: CVARIABLE
 	{
-		/*
-		 * As long as multidimensional arrays are not implemented we have to
-		 * check for those here
-		 */
-		const char *ptr = @1;
-		int			brace_open = 0,
-					brace = false;
-
-		for (; *ptr; ptr++)
-		{
-			switch (*ptr)
-			{
-				case '[':
-					if (brace)
-						mmfatal(PARSE_ERROR, "multidimensional arrays for simple data types are not supported");
-					brace_open++;
-					break;
-				case ']':
-					brace_open--;
-					if (brace_open == 0)
-						brace = true;
-					break;
-				case '\t':
-				case ' ':
-					break;
-				default:
-					if (brace_open == 0)
-						brace = false;
-					break;
-			}
-		}
+		/* previously rejected multidimensional arrays; now handled in find_variable */
 	}
 	;
 
@@ -2256,4 +2231,34 @@ parser_init(void)
 	 * This function is empty. It only exists for compatibility with the
 	 * backend parser right now.
 	 */
+}
+
+static struct array_dim *
+array_dim_append_node(struct array_dim *list, const char *size)
+{
+	struct array_dim *node = (struct array_dim *) loc_alloc(sizeof(struct array_dim));
+	struct array_dim *iter;
+
+	node->size = loc_strdup(size);
+	node->next = NULL;
+
+	if (list == NULL)
+		return node;
+
+	iter = list;
+	while (iter->next)
+		iter = iter->next;
+
+	iter->next = node;
+	return list;
+}
+
+static struct ECPGtype *
+ecpg_apply_extra_array_dims(struct ECPGtype *type, struct array_dim *dims)
+{
+	if (dims == NULL)
+		return type;
+
+	type = ecpg_apply_extra_array_dims(type, dims->next);
+	return ECPGmake_array_type(type, dims->size);
 }

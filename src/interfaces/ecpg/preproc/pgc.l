@@ -27,6 +27,15 @@
 
 #include "preproc_extern.h"
 #include "preproc.h"
+#include "c_parser.h"
+
+#undef YY_USER_ACTION
+#define YY_USER_ACTION \
+	do { \
+		if (c_parser_collect_tokens) \
+			ecpg_c_parser_append(yytext, yyleng); \
+	} while (0); \
+	/* fall through */
 }
 
 %{
@@ -53,6 +62,22 @@ static int	parenths_open;
 
 /* Used to tell parse_include() whether the command was #include or #include_next */
 static bool include_next;
+static int	c_parser_struct_pending = 0;
+static int	c_parser_struct_ignore_depth = 0;
+static int	c_parser_initializer_depth = 0;
+static bool	c_parser_decl_candidate = false;
+static bool c_parser_decl_has_initializer = false;
+static bool c_parser_collect_tokens = false;
+static int	c_parser_for_pending = 0;
+static int	c_parser_for_paren_depth = 0;
+static bool	c_parser_for_init_active = false;
+static int	c_parser_if_pending = 0;
+static int	c_parser_if_paren_depth = 0;
+static bool	c_parser_if_init_active = false;
+
+static void c_parser_discard_buffer(void);
+static bool c_parser_keyword_starts_declaration(int token);
+static void c_parser_maybe_note_decl_keyword(int token);
 
 #define startlit()	(literalbuf[0] = '\0', literallen = 0)
 static void addlit(char *ytext, int yleng);
@@ -64,6 +89,50 @@ static bool isdefine(void);
 static bool isinformixdefine(void);
 
 char	   *token_start;
+
+static void
+c_parser_discard_buffer(void)
+{
+	c_parser_decl_candidate = false;
+	c_parser_decl_has_initializer = false;
+	c_parser_initializer_depth = 0;
+	ecpg_c_parser_reset();
+}
+
+static bool
+c_parser_keyword_starts_declaration(int token)
+{
+	switch (token)
+	{
+		case INT_P:
+		case FLOAT_P:
+		case DOUBLE_P:
+		case CHAR_P:
+		case SQL_LONG:
+		case SQL_SHORT:
+		case SQL_UNSIGNED:
+		case SQL_SIGNED:
+		case SQL_BOOL:
+		case SQL_STRUCT:
+		case S_CONST:
+		case S_VOLATILE:
+		case S_STATIC:
+		case S_EXTERN:
+		case S_REGISTER:
+		case S_AUTO:
+		case S_TYPEDEF:
+			return true;
+		default:
+			return false;
+	}
+}
+
+static void
+c_parser_maybe_note_decl_keyword(int token)
+{
+	if (c_parser_keyword_starts_declaration(token))
+		c_parser_decl_candidate = true;
+}
 
 /* vars to keep track of start conditions when scanning literals */
 static int	state_before_str_start;
@@ -509,6 +578,7 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 						{
 							ECHO;
 							BEGIN(SQL);
+							c_parser_collect_tokens = false;
 							token_start = NULL;
 						}
 						else
@@ -521,6 +591,7 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					{
 						ECHO;
 						BEGIN(C);
+						c_parser_collect_tokens = true;
 						token_start = NULL;
 					}
 				}
@@ -724,6 +795,7 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 						free(dolqstart);
 						dolqstart = NULL;
 						BEGIN(SQL);
+						c_parser_collect_tokens = false;
 						base_yylval.str = loc_strdup(literalbuf);
 						return SCONST;
 					}
@@ -870,7 +942,10 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					 * TYPE or VAR statement. This is not an EOL marker.
 					 */
 					if (yytext[0] == ';' && struct_level == 0)
+					{
 						BEGIN(C);
+						c_parser_collect_tokens = true;
+					}
 					return yytext[0];
 				}
 
@@ -1100,15 +1175,21 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 	 */
 
 <C>{exec_sql}	{
-					BEGIN(SQL);
-					return SQL_START;
-				}
+			ecpg_c_parser_process_statement(braces_open);
+			c_parser_discard_buffer();
+			BEGIN(SQL);
+			c_parser_collect_tokens = false;
+			return SQL_START;
+		}
 <C>{informix_special}	{
-					/* are we simulating Informix? */
-					if (INFORMIX_MODE)
-					{
-						BEGIN(SQL);
-						return SQL_START;
+			/* are we simulating Informix? */
+			if (INFORMIX_MODE)
+			{
+				ecpg_c_parser_process_statement(braces_open);
+				c_parser_discard_buffer();
+				BEGIN(SQL);
+				c_parser_collect_tokens = false;
+				return SQL_START;
 					}
 					else
 						return S_ANYTHING;
@@ -1117,33 +1198,38 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					ECHO;
 				}
 <C>{cppinclude}	{
-					if (system_includes)
-					{
-						include_next = false;
-						BEGIN(incl);
-					}
-					else
-					{
-						base_yylval.str = loc_strdup(yytext);
-						return CPP_LINE;
-					}
-				}
+			if (system_includes)
+			{
+				include_next = false;
+				c_parser_discard_buffer();
+				BEGIN(incl);
+			}
+			else
+			{
+				c_parser_discard_buffer();
+				base_yylval.str = loc_strdup(yytext);
+				return CPP_LINE;
+			}
+		}
 <C>{cppinclude_next} {
-					if (system_includes)
-					{
-						include_next = true;
-						BEGIN(incl);
-					}
-					else
-					{
-						base_yylval.str = loc_strdup(yytext);
-						return CPP_LINE;
-					}
-				}
+			if (system_includes)
+			{
+				include_next = true;
+				c_parser_discard_buffer();
+				BEGIN(incl);
+			}
+			else
+			{
+				c_parser_discard_buffer();
+				base_yylval.str = loc_strdup(yytext);
+				return CPP_LINE;
+			}
+		}
 <C,SQL>{cppline} {
-					base_yylval.str = loc_strdup(yytext);
-					return CPP_LINE;
-				}
+			c_parser_discard_buffer();
+			base_yylval.str = loc_strdup(yytext);
+			return CPP_LINE;
+		}
 <C>{identifier}	{
 					/*
 					 * Try to detect a function name:
@@ -1162,11 +1248,43 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					{
 						int			kwvalue;
 
+						if (YY_START == C)
+						{
+							if (strcmp(yytext, "for") == 0)
+							{
+								c_parser_for_pending = 1;
+								c_parser_for_paren_depth = 0;
+								c_parser_for_init_active = false;
+								c_parser_discard_buffer();
+								c_parser_collect_tokens = false;
+							}
+							else if (strcmp(yytext, "if") == 0)
+							{
+								c_parser_if_pending = 1;
+								c_parser_if_paren_depth = 0;
+								c_parser_if_init_active = false;
+								c_parser_discard_buffer();
+								c_parser_collect_tokens = false;
+							}
+						}
+
 						kwvalue = ScanCKeywordLookup(yytext);
 						if (kwvalue >= 0)
+						{
+							if (YY_START == C)
+							{
+								if (kwvalue == SQL_STRUCT ||
+									kwvalue == UNION ||
+									kwvalue == ENUM_P)
+									c_parser_struct_pending++;
+								c_parser_maybe_note_decl_keyword(kwvalue);
+							}
 							return kwvalue;
+						}
 						else
 						{
+							if (YY_START == C && ecpg_c_parser_is_typedef_name(yytext))
+								c_parser_decl_candidate = true;
 							base_yylval.str = loc_strdup(yytext);
 							return IDENT;
 						}
@@ -1176,21 +1294,125 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					mmerror(PARSE_ERROR, ET_ERROR, "nested /* ... */ comments");
 				}
 <C>":"				{ return ':'; }
-<C>";"				{ return ';'; }
+<C>";"				{
+					if (c_parser_struct_pending > 0)
+						c_parser_struct_pending = 0;
+					if (c_parser_for_init_active && c_parser_for_paren_depth == 1)
+					{
+						ecpg_c_parser_process_statement(braces_open);
+						c_parser_discard_buffer();
+						c_parser_for_init_active = false;
+					}
+					if (c_parser_struct_ignore_depth == 0)
+					{
+						ecpg_c_parser_process_statement(braces_open);
+						c_parser_discard_buffer();
+					}
+					return ';';
+				}
 <C>","				{ return ','; }
 <C>"*"				{ return '*'; }
 <C>"%"				{ return '%'; }
 <C>"/"				{ return '/'; }
 <C>"+"				{ return '+'; }
 <C>"-"				{ return '-'; }
-<C>"("				{ parenths_open++; return '('; }
-<C>")"				{ parenths_open--; return ')'; }
+<C>"("				{
+					parenths_open++;
+					if (c_parser_for_pending)
+					{
+						if (c_parser_for_paren_depth == 0)
+						{
+							c_parser_discard_buffer();
+							c_parser_for_init_active = true;
+							c_parser_collect_tokens = true;
+						}
+						c_parser_for_paren_depth++;
+					}
+					else if (c_parser_if_pending)
+					{
+						if (c_parser_if_paren_depth == 0)
+						{
+							c_parser_discard_buffer();
+							c_parser_if_init_active = true;
+							c_parser_collect_tokens = true;
+						}
+						c_parser_if_paren_depth++;
+					}
+					return '(';
+				}
+<C>")"				{
+					parenths_open--;
+					if (c_parser_for_paren_depth > 0)
+					{
+						c_parser_for_paren_depth--;
+						if (c_parser_for_paren_depth == 0)
+						{
+							c_parser_for_pending = 0;
+							c_parser_for_init_active = false;
+							c_parser_discard_buffer();
+							c_parser_collect_tokens = true;
+						}
+					}
+					if (c_parser_if_paren_depth > 0)
+					{
+						c_parser_if_paren_depth--;
+						if (c_parser_if_paren_depth == 0)
+						{
+							if (c_parser_if_init_active)
+							{
+								ecpg_c_parser_process_statement(braces_open);
+								c_parser_discard_buffer();
+								c_parser_if_init_active = false;
+							}
+							c_parser_if_pending = 0;
+							c_parser_collect_tokens = true;
+						}
+					}
+					return ')';
+				}
 <C,xskip>{space}		{ ECHO; }
-<C>\{				{ return '{'; }
-<C>\}				{ return '}'; }
+<C>\{				{
+					if (c_parser_struct_pending > 0)
+					{
+						c_parser_struct_ignore_depth++;
+						c_parser_struct_pending = 0;
+					}
+					else if (c_parser_struct_ignore_depth > 0)
+						c_parser_struct_ignore_depth++;
+					else if (c_parser_initializer_depth > 0 || c_parser_decl_has_initializer)
+					{
+						if (c_parser_decl_has_initializer)
+						{
+							c_parser_initializer_depth = 1;
+							c_parser_decl_has_initializer = false;
+						}
+						else
+							c_parser_initializer_depth++;
+					}
+					else
+					{
+						if (c_parser_decl_candidate && parenths_open == 0)
+							ecpg_c_parser_process_statement(braces_open);
+						c_parser_discard_buffer();
+					}
+					return '{';
+				}
+<C>\}				{
+					if (c_parser_struct_ignore_depth > 0)
+						c_parser_struct_ignore_depth--;
+					else if (c_parser_initializer_depth > 0)
+						c_parser_initializer_depth--;
+					else if (c_parser_struct_pending == 0)
+						c_parser_discard_buffer();
+					return '}';
+				}
 <C>\[				{ return '['; }
 <C>\]				{ return ']'; }
-<C>\=				{ return '='; }
+<C>\=				{
+					if (c_parser_decl_candidate)
+						c_parser_decl_has_initializer = true;
+					return '=';
+				}
 <C>"->"				{ return S_MEMBER; }
 <C>">>"				{ return S_RSHIFT; }
 <C>"<<"				{ return S_LSHIFT; }
@@ -1273,6 +1495,7 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					}
 
 					BEGIN(C);
+					c_parser_collect_tokens = true;
 				}
 <undef>{other}|\n {
 					mmfatal(PARSE_ERROR, "missing identifier in EXEC SQL UNDEF command");
@@ -1392,7 +1615,10 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 						stacked_if_value[preproc_tos].saw_active = true;
 
 						if (stacked_if_value[preproc_tos].active)
+						{
 							BEGIN(C);
+							c_parser_collect_tokens = true;
+						}
 						else
 							BEGIN(xskip);
 					}
@@ -1414,7 +1640,10 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 							stacked_if_value[preproc_tos].saw_active = true;
 
 							if (stacked_if_value[preproc_tos].active)
+							{
 								BEGIN(C);
+								c_parser_collect_tokens = true;
+							}
 							else
 								BEGIN(xskip);
 						}
@@ -1432,7 +1661,10 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 						preproc_tos--;
 
 					if (stacked_if_value[preproc_tos].active)
+					{
 						BEGIN(C);
+						c_parser_collect_tokens = true;
+					}
 					else
 						BEGIN(xskip);
 				}
@@ -1446,7 +1678,10 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 							preproc_tos--;
 
 						if (stacked_if_value[preproc_tos].active)
+						{
 							BEGIN(C);
+							c_parser_collect_tokens = true;
+						}
 						else
 							BEGIN(xskip);
 					}
@@ -1497,7 +1732,10 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					}
 
 					if (stacked_if_value[preproc_tos].active)
+					{
 						BEGIN(C);
+						c_parser_collect_tokens = true;
+					}
 					else
 						BEGIN(xskip);
 				}
@@ -1544,6 +1782,7 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					}
 
 					BEGIN(C);
+					c_parser_collect_tokens = true;
 				}
 <def>[^;]		{ addlit(yytext, yyleng); }
 <incl>\<[^\>]+\>{space}*";"?	{	parse_include(); }
@@ -1620,6 +1859,8 @@ lex_init(void)
 	current_function = NULL;
 
 	yylineno = 1;
+	ecpg_c_parser_init();
+	c_parser_discard_buffer();
 
 	/* initialize state for if/else/endif */
 	preproc_tos = 0;
@@ -1636,6 +1877,7 @@ lex_init(void)
 	startlit();
 
 	BEGIN(C);
+	c_parser_collect_tokens = true;
 }
 
 static void
@@ -1797,6 +2039,7 @@ parse_include(void)
 	output_line_number();
 
 	BEGIN(C);
+	c_parser_collect_tokens = true;
 }
 
 /*

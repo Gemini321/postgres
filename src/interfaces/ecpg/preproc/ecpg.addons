@@ -442,26 +442,41 @@ ECPG: block opt_array_bounds opt_array_bounds '[' ']'
 	{
 		$$.index1 = $1.index1;
 		$$.index2 = $1.index2;
+		$$.array_dims = $1.array_dims;
 		if (strcmp($$.index1, "-1") == 0)
+		{
 			$$.index1 = "0";
+		}
 		else if (strcmp($1.index2, "-1") == 0)
+		{
 			$$.index2 = "0";
+		}
+		else
+			$$.array_dims = array_dim_append_node($$.array_dims, "0");
 		$$.str = cat_str(2, $1.str, "[]");
 	}
 	| opt_array_bounds '[' Iresult ']'
 	{
 		$$.index1 = $1.index1;
 		$$.index2 = $1.index2;
+		$$.array_dims = $1.array_dims;
 		if (strcmp($1.index1, "-1") == 0)
+		{
 			$$.index1 = @3;
+		}
 		else if (strcmp($1.index2, "-1") == 0)
+		{
 			$$.index2 = @3;
+		}
+		else
+			$$.array_dims = array_dim_append_node($$.array_dims, @3);
 		$$.str = cat_str(4, $1.str, "[", @3, "]");
 	}
 ECPG: block opt_array_bounds
 	{
 		$$.index1 = "-1";
 		$$.index2 = "-1";
+		$$.array_dims = NULL;
 		$$.str = "";
 	}
 ECPG: rule AexprConst NULL_P

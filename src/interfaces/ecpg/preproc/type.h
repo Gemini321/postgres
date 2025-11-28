@@ -92,11 +92,18 @@ struct when
 	char	   *str;
 };
 
+struct array_dim
+{
+	char	   *size;
+	struct array_dim *next;
+};
+
 struct index
 {
 	const char *index1;
 	const char *index2;
 	const char *str;
+	struct array_dim *array_dims;
 };
 
 struct su_symbol

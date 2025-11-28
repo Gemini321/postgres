@@ -635,23 +635,8 @@ ECPGfree_type(struct ECPGtype *type)
 	{
 		switch (type->type)
 		{
-			case ECPGt_array:
-				switch (type->u.element->type)
-				{
-					case ECPGt_array:
-						base_yyerror("internal error: found multidimensional array\n");
-						break;
-					case ECPGt_struct:
-					case ECPGt_union:
-						/* Array of structs. */
-						ECPGfree_type(type->u.element);
-						break;
-					default:
-						if (!IS_SIMPLE_TYPE(type->u.element->type))
-							base_yyerror("internal error: unknown datatype, please report this to <" PACKAGE_BUGREPORT ">");
-
-						ECPGfree_type(type->u.element);
-				}
+	case ECPGt_array:
+				ECPGfree_type(type->u.element);
 				break;
 			case ECPGt_struct:
 			case ECPGt_union:

@@ -7,6 +7,7 @@
 #include "preproc_extern.h"
 #include "preproc.h"
 #include "ecpg_config.h"
+#include "c_parser.h"
 #include <unistd.h>
 
 /* silence -Wmissing-variable-declarations */
@@ -43,6 +44,8 @@ static struct this_type actual_type[STRUCT_DEPTH];
 static char *actual_startline[STRUCT_DEPTH];
 static int	varchar_counter = 1;
 static int	bytea_counter = 1;
+static struct array_dim *array_dim_append_node(struct array_dim *list, const char *size);
+static struct ECPGtype *ecpg_apply_extra_array_dims(struct ECPGtype *type, struct array_dim *dims);
 
 /*
  * We temporarily store struct members here while parsing struct declarations.

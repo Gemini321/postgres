@@ -26,6 +26,9 @@ override CFLAGS += $(PTHREAD_CFLAGS)
 OBJS = \
 	$(WIN32RES) \
 	c_keywords.o \
+	c_parser.tab.o \
+	c_parser.yy.o \
+	c_parser_api.o \
 	descriptor.o \
 	ecpg.o \
 	ecpg_keywords.o \
@@ -68,6 +71,12 @@ preproc.c: BISONFLAGS += -d
 preproc.y: ../../../backend/parser/gram.y parse.pl ecpg.addons ecpg.header ecpg.tokens ecpg.trailer ecpg.type
 	$(PERL) $(srcdir)/parse.pl --srcdir $(srcdir) --parser $< --output $@
 
+c_parser.tab.c: c_parser.y
+	$(BISON) -d -o $@ $<
+
+c_parser.yy.c: c_parser.l
+	$(FLEX) -o $@ $<
+
 # generate keyword headers
 c_kwlist_d.h: c_kwlist.h $(GEN_KEYWORDLIST_DEPS)
 	$(GEN_KEYWORDLIST) --varname ScanCKeywords --no-case-fold $<
@@ -97,4 +106,5 @@ clean distclean:
 	rm -f *.o ecpg$(X)
 	rm -f typename.c
 	rm -f preproc.y preproc.c preproc.h pgc.c c_kwlist_d.h ecpg_kwlist_d.h
+	rm -f c_parser.tab.c c_parser.tab.h c_parser.yy.c
 	rm -rf tmp_check
